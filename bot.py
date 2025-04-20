@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 from config import BOT_TOKEN
+from message_filter import check_message
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -20,6 +21,17 @@ def new_member(message):
         if user.id == bot.get_me().id:
             bot.send_message(message.chat.id, "Я бот-администратор, буду следить за порядком")
             break
+
+@bot.message_handler(content_types=['text'])
+def handle_message(message):
+    print(f"Получено сообщение: {message.text}")
+    result = check_message(message.text)
+    print(f"Предсказание: {result}")
+    if result["is_toxic"]:
+        bot.delete_message(message.chat.id, message.message_id)
+        bot.send_message(message.chat.id, "⚠️ Сообщение удалено: нарушает правила.")
+    else:
+        pass  # сообщение остаётся
 
 if __name__ == '__main__':
     print("Бот запущен!")
