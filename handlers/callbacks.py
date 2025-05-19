@@ -1,7 +1,10 @@
 from telebot import types
+from telebot.handler_backends import StatesGroup, State
 import logging
+import time
 from utils import get_username, create_main_menu
 from database import Database 
+from .voting import VotingSystem
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +55,15 @@ def create_settings_menu(bot, chat_id, user_id, db: Database):
     ))
     
     markup.add(types.InlineKeyboardButton(
+        "📝 Правила чата",
+        callback_data=f"edit_rules_{chat_id}"
+    ))
+    
+    markup.add(types.InlineKeyboardButton(
         "← Назад",
         callback_data="back_to_groups"
     ))
+    
     
     logger.info(f"Меню настроек для группы {chat_id} создано успешно: {settings}")
     return markup
@@ -62,7 +71,12 @@ def create_settings_menu(bot, chat_id, user_id, db: Database):
 def register_callbacks(bot, db: Database):
     """Регистрация обработчиков callback-запросов"""
     logger.info("Регистрация обработчиков callback-запросов")
+    voting = VotingSystem(bot, db)
 
+    @bot.callback_query_handler(func=lambda call: call.data.startswith('vote_'))
+    def handle_vote_callback(call):
+        voting.handle_vote(call)
+    
     @bot.callback_query_handler(func=lambda call: True)
     def handle_callback(call):
         try:
@@ -141,6 +155,35 @@ def register_callbacks(bot, db: Database):
                     reply_markup=create_main_menu()
                 )
 
+            elif data.startswith('edit_rules_'):
+                logger.info(f"Обработка edit_rules: {data}")
+                parts = data.split('_')
+                if len(parts) >= 3:
+                    group_id = int(parts[2])
+                    logger.info(f"Пользователь {user_id} пытается изменить правила чата {group_id}")
+
+                    # Проверка прав администратора
+                    admins = db.get_admins(group_id)
+                    if user_id not in admins:
+                        logger.warning(f"Пользователь {user_id} не является администратором чата {group_id}")
+                        bot.answer_callback_query(call.id, "❌ Только администраторы могут изменять правила!", show_alert=True)
+                        return
+
+                    # Запрос нового текста правил
+                    logger.info(f"Отправка запроса на ввод правил для чата {group_id}")
+                    sent_msg = bot.send_message(
+                        call.message.chat.id,
+                        "✍️ Введите новые правила для этого чата:",
+                        reply_markup=types.ForceReply()
+                    )
+                    logger.info(f"Сообщение отправлено: message_id={sent_msg.message_id}")
+
+                    # Сохранение состояния
+                    bot.set_state(user_id, "waiting_rules_text", call.message.chat.id)
+                    with bot.retrieve_data(user_id, call.message.chat.id) as data_state:
+                        data_state["target_chat_id"] = group_id
+                    logger.info(f"Состояние установлено: user_id={user_id}, chat_id={call.message.chat.id}, state=waiting_rules_text")
+            
             elif data == 'back_to_groups':
                 logger.info(f"Пользователь {user_id} возвращается к списку групп")
                 bot.edit_message_text(

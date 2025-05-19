@@ -2,6 +2,8 @@ from telebot import types
 import logging
 from config import LAYOUT_TRANS, BOT_INVITE_URL
 from model.predict import predict_toxicity
+import pytz
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -79,3 +81,18 @@ def check_message(text):
     except Exception as e:
         logger.error(f"Ошибка в predict_toxicity для текста '{text}': {e}") 
         return {"is_toxic": False, "label": 0}
+    
+def get_current_time_in_timezone(timezone):
+    tz = pytz.timezone(timezone)
+    return datetime.now(tz).time()
+
+def minutes_to_time(minutes):
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours:02d}:{mins:02d}"
+
+def is_chat_open(current_time, work_start, work_end):
+    current_minutes = current_time.hour * 60 + current_time.minute
+    return work_start <= current_minutes < work_end
+
+    

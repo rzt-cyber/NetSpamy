@@ -4,9 +4,9 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta
 from config import PROFANITY_REGEX
-from utils import is_latin_text, correct_layout, get_username, check_message
+from utils import is_latin_text, correct_layout, get_username, check_message, create_main_menu, get_current_time_in_timezone, minutes_to_time, is_chat_open
 from database import Database
-from handlers.callbacks import create_admin_menu
+from handlers.callbacks import create_admin_menu, create_settings_menu
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,28 @@ def register_events(bot, db: Database):
 
         except Exception as e:
             logger.error(f"Ошибка в handle_new_members: {e}")
+    
+    @bot.message_handler(content_types=['text', 'photo', 'video', 'document'])
+    def handle_message(message):
+        try:
+            chat_id = message.chat.id
+            if message.chat.type not in ['group', 'supergroup']:
+                return
 
+            # Получение настроек времени
+            work_start, work_end, timezone = db.get_work_hours(chat_id)
+            current_time = get_current_time_in_timezone(timezone)
+
+            # Проверка, открыт ли чат
+            if not is_chat_open(current_time, work_start, work_end):
+                bot.delete_message(chat_id, message.message_id)
+                bot.send_message(
+                    chat_id,
+                    f"⛔ Чат закрыт. Работает с {minutes_to_time(work_start)} до {minutes_to_time(work_end)}."
+                )
+        except Exception as e:
+            logger.error(f"Ошибка проверки времени: {e}")
+    
     @bot.message_handler(content_types=['text'])
     def handle_text(message):
         try:
@@ -233,3 +254,4 @@ def register_events(bot, db: Database):
 
         except Exception as e:
             logger.error(f"Ошибка в handle_text для сообщения '{text}' в группе {chat_id}: {e}")
+    
