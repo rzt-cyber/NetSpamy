@@ -9,19 +9,24 @@ from .voting import VotingSystem
 logger = logging.getLogger(__name__)
 
 def create_admin_menu(bot, user_id, db: Database):
-    """Создает меню администратора с группами"""
+    """Создает меню администратора с актуальным списком групп"""
     markup = types.InlineKeyboardMarkup()
     
-    for chat_id in db.get_all_groups():
-        if user_id in db.get_admins(chat_id):
-            try:
-                chat = bot.get_chat(chat_id)
-                markup.add(types.InlineKeyboardButton(
-                    chat.title,
-                    callback_data=f"settings_{chat_id}"
-                ))
-            except Exception as e:
-                logger.error(f"Ошибка получения информации о чате {chat_id}: {e}")
+    # Получаем группы, где пользователь является администратором
+    user_groups = [
+        chat_id for chat_id in db.get_all_groups() 
+        if user_id in db.get_admins(chat_id)
+    ]
+    
+    for chat_id in user_groups:
+        try:
+            chat = bot.get_chat(chat_id)
+            markup.add(types.InlineKeyboardButton(
+                chat.title,
+                callback_data=f"settings_{chat_id}"
+            ))
+        except Exception as e:
+            logger.error(f"Ошибка получения информации о чате {chat_id}: {e}")
     
     markup.add(types.InlineKeyboardButton(
         "Добавить новую группу",
@@ -40,6 +45,7 @@ def create_settings_menu(bot, chat_id, user_id, db: Database):
         ('profanity_filter', 'Фильтр матов'),
         ('auto_correction', 'Автокоррекция языка'),
         ('toxicity_filter', 'Фильтр токсичности'),
+        ('file_filter', 'Фильтр файлов'),
     ]
     
     for setting, text in buttons:
@@ -50,13 +56,18 @@ def create_settings_menu(bot, chat_id, user_id, db: Database):
         ))
     
     markup.add(types.InlineKeyboardButton(
-        "Команды",
-        callback_data=f"commands_{chat_id}"
+        "⏰ Режим работы",
+        callback_data=f"edit_worktime_{chat_id}"
     ))
     
     markup.add(types.InlineKeyboardButton(
         "📝 Правила чата",
         callback_data=f"edit_rules_{chat_id}"
+    ))
+    
+    markup.add(types.InlineKeyboardButton(
+        "💬 Команды",
+        callback_data=f"commands_{chat_id}"
     ))
     
     markup.add(types.InlineKeyboardButton(
@@ -122,12 +133,26 @@ def register_callbacks(bot, db: Database):
                 logger.info(f"Открытие настроек для группы {group_id} пользователем {user_id}")
                 if user_id in db.get_admins(group_id):
                     try:
-                        bot.edit_message_text(
-                            f"Настройки группы:",
-                            chat_id=chat_id,
-                            message_id=call.message.message_id,
-                            reply_markup=create_settings_menu(bot, group_id, user_id, db)
-                        )
+                        try:
+                            bot.edit_message_text(
+                                "⚙️ Настройки группы:",
+                                chat_id=chat_id,
+                                message_id=call.message.message_id,
+                                reply_markup=create_settings_menu(bot, group_id, user_id, db)
+                            )
+                        except Exception as e:
+                            logger.error(f"Ошибка редактирования сообщения: {e}")
+                            # Отправляем новое сообщение, если редактирование невозможно
+                            sent_msg = bot.send_message(
+                                chat_id,
+                                "⚙️ Настройки группы:",
+                                reply_markup=create_settings_menu(bot, group_id, user_id, db)
+                            )
+                            # Удаляем старое сообщение (опционально)
+                            try:
+                                bot.delete_message(chat_id, call.message.message_id)
+                            except:
+                                pass
                         logger.info(f"Сообщение отредактировано для группы {group_id}: message_id {call.message.message_id}")
                     except Exception as e:
                         logger.error(f"Ошибка редактирования сообщения для группы {group_id}: {e}")
@@ -155,34 +180,53 @@ def register_callbacks(bot, db: Database):
                     reply_markup=create_main_menu()
                 )
 
+            elif data.startswith('edit_worktime_'):
+                group_id = int(data.split('_')[2])
+                admins = db.get_admins(group_id)
+                
+                if user_id not in admins:
+                    bot.answer_callback_query(call.id, "❌ Только администраторы!", show_alert=True)
+                    return
+
+                try:
+                    # Удаляем старое сообщение
+                    bot.delete_message(chat_id, call.message.message_id)
+                except:
+                    pass
+
+                # Отправляем запрос на ввод времени
+                markup = types.ForceReply(input_field_placeholder="Пример: 09:00-18:00 Europe/Moscow")
+                sent_msg = bot.send_message(
+                    chat_id,
+                    f"⏰ Введите новый режим работы для чата (ID: {group_id}) в формате:\n"
+                    "ЧЧ:ММ-ЧЧ:ММ ЧасовойПояс\n"
+                    "Примеры:\n"
+                    "- 09:00-18:00 Europe/Moscow\n"
+                    "- 00:00-23:59 UTC\n",
+                    reply_markup=markup
+                )
+
             elif data.startswith('edit_rules_'):
-                logger.info(f"Обработка edit_rules: {data}")
-                parts = data.split('_')
-                if len(parts) >= 3:
-                    group_id = int(parts[2])
-                    logger.info(f"Пользователь {user_id} пытается изменить правила чата {group_id}")
+                group_id = int(data.split('_')[2])
+                admins = db.get_admins(group_id)
+                
+                if user_id not in admins:
+                    bot.answer_callback_query(call.id, "❌ Только администраторы!", show_alert=True)
+                    return
 
-                    # Проверка прав администратора
-                    admins = db.get_admins(group_id)
-                    if user_id not in admins:
-                        logger.warning(f"Пользователь {user_id} не является администратором чата {group_id}")
-                        bot.answer_callback_query(call.id, "❌ Только администраторы могут изменять правила!", show_alert=True)
-                        return
+                try:
+                    # Удаляем старое сообщение с кнопкой
+                    bot.delete_message(chat_id, call.message.message_id)
+                except:
+                    pass
 
-                    # Запрос нового текста правил
-                    logger.info(f"Отправка запроса на ввод правил для чата {group_id}")
-                    sent_msg = bot.send_message(
-                        call.message.chat.id,
-                        "✍️ Введите новые правила для этого чата:",
-                        reply_markup=types.ForceReply()
-                    )
-                    logger.info(f"Сообщение отправлено: message_id={sent_msg.message_id}")
-
-                    # Сохранение состояния
-                    bot.set_state(user_id, "waiting_rules_text", call.message.chat.id)
-                    with bot.retrieve_data(user_id, call.message.chat.id) as data_state:
-                        data_state["target_chat_id"] = group_id
-                    logger.info(f"Состояние установлено: user_id={user_id}, chat_id={call.message.chat.id}, state=waiting_rules_text")
+                # Отправляем новое сообщение с ForceReply
+                markup = types.ForceReply(input_field_placeholder="Напишите новые правила...")
+                sent_msg = bot.send_message(
+                    chat_id,
+                    f"✍️ Введите новые правила для чата (ID: {group_id}):",
+                    reply_markup=markup
+                )
             
             elif data == 'back_to_groups':
                 logger.info(f"Пользователь {user_id} возвращается к списку групп")
@@ -247,10 +291,17 @@ def register_callbacks(bot, db: Database):
                 logger.info(f"Пользователь {user_id} запросил список команд для группы {group_id}")
                 bot.edit_message_text(
                     "<b>Доступные команды:</b>\n"
+                    "/rules - Правила чата\n"
+                    "/votemute - Начать голосование за мут пользователя (ответ на сообщение)\n"
+                    "/voteban - Начать голосование за бан пользователя (ответ на сообщение)\n"
+                    "/report [причина] - Отправить репорт на пользователя (ответ на сообщение)\n"
+                    "\n<b>Команды администратора:</b>\n"
+                    "/setrules - установить новые правила чата\n"
                     "/mute [время] - Замьютить пользователя (ответ на сообщение)\n"
+                    "/unmute - Размьютить пользователя (ответ на сообщение)\n"
                     "/kick - Исключить пользователя (ответ на сообщение)\n"
                     "/ban - Забанить пользователя (ответ на сообщение)\n"
-                    "/report [причина] - Отправить репорт на пользователя (ответ на сообщение)",
+                    "/reload - Обновить список администраторов группы",
                     chat_id,
                     call.message.message_id,
                     parse_mode='HTML',

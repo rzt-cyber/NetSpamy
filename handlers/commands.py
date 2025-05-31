@@ -1,7 +1,6 @@
 from telebot import types
 import logging
 import datetime
-from datetime import datetime
 import time
 from utils import get_username, parse_mute_duration, format_duration, create_main_menu 
 from database import Database
@@ -46,13 +45,15 @@ def register_commands(bot, db: Database):
                 message.chat.id,
                 "<b>Доступные команды:</b>\n"
                 "/rules - Правила чата\n"
+                "/votemute - Начать голосование за мут пользователя (ответ на сообщение)\n"
+                "/voteban - Начать голосование за бан пользователя (ответ на сообщение)\n"
+                "/report [причина] - Отправить репорт на пользователя (ответ на сообщение)\n"
+                "\n<b>Команды администратора:</b>\n"
+                "/setrules - установить новые правила чата\n"
                 "/mute [время] - Замьютить пользователя (ответ на сообщение)\n"
                 "/unmute - Размьютить пользователя (ответ на сообщение)\n"
                 "/kick - Исключить пользователя (ответ на сообщение)\n"
                 "/ban - Забанить пользователя (ответ на сообщение)\n"
-                "/votemute - Начать голосование за мут пользователя (ответ на сообщение)\n"
-                "/voteban - Начать голосование за бан пользователя (ответ на сообщение)\n"
-                "/report [причина] - Отправить репорт на пользователя (ответ на сообщение)\n"
                 "/reload - Обновить список администраторов группы",
                 parse_mode='HTML'
             )
@@ -114,7 +115,7 @@ def register_commands(bot, db: Database):
                 return
 
             if not message.reply_to_message:
-                bot.reply_to(message, "Эта команда должна быть ответом на сообщение.")
+                bot.reply_to(message, "❌ Эта команда должна быть ответом на сообщение.")
                 return
 
             target_user_id = message.reply_to_message.from_user.id
@@ -124,7 +125,6 @@ def register_commands(bot, db: Database):
                 duration_sec = parse_mute_duration(duration_str)
                 unmute_time = datetime.datetime.now() + datetime.timedelta(seconds=duration_sec)
                 
-                # Применение ограничений через Telegram API
                 try:
                     bot.restrict_chat_member(
                         chat_id, target_user_id, 
@@ -279,76 +279,3 @@ def register_commands(bot, db: Database):
         except Exception as e:
             logger.error(f"Ошибка в /setrules: {e}")
             bot.reply_to(message, "❌ Произошла ошибка при сохранении правил.")
-            
-    @bot.message_handler(commands=['setworktime'])
-    def handle_set_work_time(message):
-        try:
-            chat_id = message.chat.id
-            user_id = message.from_user.id
-
-            # Проверка, что команда вызвана в группе
-            if message.chat.type not in ['group', 'supergroup']:
-                bot.reply_to(message, "❌ Команда работает только в группах!")
-                return
-
-            # Проверка прав администратора
-            admins = db.get_admins(chat_id)
-            if user_id not in admins:
-                bot.reply_to(message, "❌ Только администраторы могут настраивать режим работы!")
-                return
-
-            # Проверка наличия аргументов (например, /setworktime 09:00-18:00)
-            args = message.text.split()[1:] if len(message.text.split()) > 1 else []
-            if args:
-                time_input = " ".join(args)
-                process_work_time_input(message, time_input)
-            else:
-                # Запрос времени, если аргументов нет
-                bot.reply_to(message, "⏰ Введите время работы в формате **ЧЧ:ММ-ЧЧ:ММ** (например, 09:00-18:00):", parse_mode="Markdown")
-                bot.set_state(user_id, "waiting_work_time", chat_id)
-
-        except Exception as e:
-            logger.error(f"Ошибка в /setworktime: {e}")
-            bot.reply_to(message, "❌ Произошла ошибка!")
-            
-    @bot.message_handler(state="waiting_work_time", content_types=['text'])
-    def process_work_time_input(message, time_input=None):
-        try:
-            user_id = message.from_user.id
-            chat_id = message.chat.id
-
-            # Если time_input не передан, берем текст сообщения
-            if not time_input:
-                time_input = message.text.strip()
-
-            # Проверка формата (например, "09:00-18:00")
-            if "-" not in time_input:
-                raise ValueError("Некорректный формат")
-
-            start_str, end_str = time_input.split("-")
-            start_time = datetime.strptime(start_str.strip(), "%H:%M").time()
-            end_time = datetime.strptime(end_str.strip(), "%H:%M").time()
-
-            # Конвертация в минуты
-            work_start = start_time.hour * 60 + start_time.minute
-            work_end = end_time.hour * 60 + end_time.minute
-
-            # Сохранение в базу данных
-            db.update_work_hours(
-                chat_id=chat_id,
-                work_start=work_start,
-                work_end=work_end,
-                timezone="Europe/Moscow"  # Пример, можно добавить выбор часового пояса
-            )
-
-            bot.reply_to(
-                message,
-                f"✅ Режим работы обновлен: {start_str} — {end_str}"
-            )
-            bot.delete_state(user_id, chat_id)
-
-        except ValueError as e:
-            bot.reply_to(message, "❌ Некорректный формат! Пример: `/setworktime 09:00-18:00`", parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Ошибка сохранения времени: {e}", exc_info=True)
-            bot.reply_to(message, "❌ Ошибка при сохранении!")

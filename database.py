@@ -24,7 +24,8 @@ class Database:
                     settings TEXT DEFAULT '{"greeting_enabled": true, "profanity_filter": true, "auto_correction": true}',
                     work_start INTEGER DEFAULT 0,  
                     work_end INTEGER DEFAULT 1440, 
-                    timezone TEXT DEFAULT 'UTC'
+                    timezone TEXT DEFAULT 'UTC',
+                    is_closed BOOLEAN DEFAULT FALSE
                 )
             """)
 
@@ -417,11 +418,16 @@ class Database:
             
     def set_rules(self, chat_id, text):
         try:
-            logger.debug(f"Сохранение правил для chat_id={chat_id}: {text[:50]}...")
-            self.cursor.execute("INSERT OR REPLACE INTO rules (chat_id, text) VALUES (?, ?)", (chat_id, text))
+            self.cursor.execute(
+                "INSERT OR REPLACE INTO rules (chat_id, text) VALUES (?, ?)",
+                (chat_id, text)
+            )
             self.conn.commit()
+            logger.info(f"Правила чата {chat_id} обновлены")
+            return True
         except Exception as e:
             logger.error(f"Ошибка сохранения правил: {e}")
+            return False
 
     def get_rules(self, chat_id):
         """Получение правил чата"""
@@ -438,15 +444,48 @@ class Database:
         
     # Режим работы чата
     def update_work_hours(self, chat_id, work_start, work_end, timezone):
-        self.cursor.execute(
-            "UPDATE groups SET work_start = ?, work_end = ?, timezone = ? WHERE chat_id = ?",
-            (work_start, work_end, timezone, chat_id)
-        )
-        self.conn.commit()
+        try:
+            self.cursor.execute(
+                "UPDATE groups SET work_start = ?, work_end = ?, timezone = ? WHERE chat_id = ?",
+                (work_start, work_end, timezone, chat_id)
+            )
+            self.conn.commit()
+            
+            # Импортируем здесь, чтобы избежать циклических импортов
+            from main import bot  # Получаем экземпляр бота
+            from handlers.events import handle_chat_status
+            # Вызываем с force_notification=True для отправки уведомления
+            handle_chat_status(bot, self, chat_id, force_notification=True)
+            
+        except Exception as e:
+            logger.error(f"Ошибка обновления режима работы: {e}")
 
     def get_work_hours(self, chat_id):
+        
         self.cursor.execute(
             "SELECT work_start, work_end, timezone FROM groups WHERE chat_id = ?",
             (chat_id,)
         )
         return self.cursor.fetchone()
+    
+    def set_chat_closed(self, chat_id: int, is_closed: bool):
+        try:
+            self.cursor.execute(
+                "UPDATE groups SET is_closed = ? WHERE chat_id = ?",
+                (is_closed, chat_id)
+            )
+            self.conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка обновления статуса чата: {e}")
+
+    def is_chat_closed(self, chat_id: int) -> bool:
+        try:
+            self.cursor.execute(
+                "SELECT is_closed FROM groups WHERE chat_id = ?",
+                (chat_id,)
+            )
+            result = self.cursor.fetchone()
+            return result['is_closed'] if result else False
+        except sqlite3.Error as e:
+            logger.error(f"Ошибка получения статуса чата: {e}")
+            return False
