@@ -30,7 +30,7 @@ class ToxicDataset(Dataset):
         return len(self.texts)
 
 # Загрузка данных
-df = pd.read_csv("data/messages.csv")
+df = pd.read_csv("data/filename.xls")
 texts = df["text"].tolist()
 labels = df["label"].tolist()
 
