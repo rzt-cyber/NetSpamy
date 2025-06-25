@@ -18,4 +18,6 @@ model/my_model/
 model/checkpoint-1512/
 model/checkpoint-1008
 model/checkpoint-504
+
+bot.db
    
